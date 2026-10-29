@@ -1,0 +1,95 @@
+# Пост о новом релизе в Telegram-группу FFF (тема «Releases»).
+#
+# Срабатывает при публикации релиза в NeFeroN/FFF. Вручную (Actions → Telegram release post →
+# Run workflow) можно отправить пост и для уже вышедшего релиза — по его тегу.
+#
+# Текст берётся из описания релиза: только английская часть, после строки «---». Markdown
+# переводится в HTML Telegram: ### заголовки — жирным, «- » — маркеры, **жирный**, `код`.
+# Установщик к посту не прикладывается (бот отправляет максимум 50 МБ) — только ссылки.
+#
+# Нужен секрет репозитория TELEGRAM_BOT_TOKEN. Бот должен быть в группе с правом писать в тему.
+# Эталонная копия этого файла лежит в проекте: Installer\telegram-release.yml.
+
+name: Telegram release post
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to post, e.g. v2.0.0.6"
+        required: true
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Telegram
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: "@fastbootfirmwareflasher"
+          THREAD_ID: "25"
+          TAG: ${{ github.event.inputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import html, json, os, re, urllib.request
+
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))
+          release = event.get("release")
+          if not release:
+              url = f"https://api.github.com/repos/{os.environ['REPO']}/releases/tags/{os.environ['TAG']}"
+              req = urllib.request.Request(url, headers={"User-Agent": "fff-telegram"})
+              release = json.load(urllib.request.urlopen(req))
+
+          body = (release.get("body") or "").replace("\r\n", "\n")
+          # Описание на двух языках: русский, затем «---», затем английский. Берём английский.
+          parts = [p.strip() for p in re.split(r"^\s*-{3,}\s*$", body, flags=re.M) if p.strip()]
+          text = parts[-1] if parts else ""
+
+          def inline(s):
+              s = html.escape(s, quote=False)
+              s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+              s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+              return s
+
+          lines = []
+          for raw in text.split("\n"):
+              line = raw.strip()
+              if not line:
+                  continue
+              if line.startswith("#"):
+                  if lines:
+                      lines.append("")
+                  lines.append("<b>" + inline(line.lstrip("#").strip()) + "</b>")
+              elif line.startswith(("- ", "* ")):
+                  lines.append("• " + inline(line[2:]))
+              else:
+                  lines.append(inline(line))
+
+          title = release.get("name") or release.get("tag_name")
+          links = [f'<a href="{release["html_url"]}">Release page</a>']
+          for asset in release.get("assets", []):
+              if asset["name"].lower().endswith(".exe"):
+                  links.append(f'<a href="{asset["browser_download_url"]}">Download installer</a>')
+                  break
+
+          message = f"<b>{html.escape(title)}</b>\n\n" + "\n".join(lines) + "\n\n" + " · ".join(links)
+          if len(message) > 4096:  # предел Telegram на одно сообщение
+              message = message[:4000].rsplit("\n", 1)[0] + "\n…\n\n" + " · ".join(links)
+
+          payload = {
+              "chat_id": os.environ["CHAT_ID"],
+              "message_thread_id": int(os.environ["THREAD_ID"]),
+              "text": message,
+              "parse_mode": "HTML",
+              "link_preview_options": {"is_disabled": True},
+          }
+          req = urllib.request.Request(
+              f"https://api.telegram.org/bot{os.environ['TOKEN']}/sendMessage",
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+          )
+          print(urllib.request.urlopen(req).read().decode("utf-8")[:300])
+          PY
