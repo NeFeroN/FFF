@@ -71,10 +71,12 @@ jobs:
           # Номер версии — моноширинным: иначе Telegram принимает «2.0.0.6» за адрес и делает ссылкой.
           title = html.escape(release.get("name") or release.get("tag_name"))
           title = re.sub(r"\bv?\d+(?:\.\d+){1,3}\b", r"<code>\g<0></code>", title)
+          # Только ссылка на установщик. Если его к релизу не приложили — на страницу релиза,
+          # чтобы пост не остался совсем без ссылки.
           links = [f'<a href="{release["html_url"]}">Release page</a>']
           for asset in release.get("assets", []):
               if asset["name"].lower().endswith(".exe"):
-                  links.append(f'<a href="{asset["browser_download_url"]}">Download installer</a>')
+                  links = [f'<a href="{asset["browser_download_url"]}">Download installer</a>']
                   break
 
           message = f"<b>{title}</b>\n\n" + "\n".join(lines) + "\n\n" + " · ".join(links)
