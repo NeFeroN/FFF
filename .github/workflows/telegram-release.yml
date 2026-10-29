@@ -68,28 +68,45 @@ jobs:
               else:
                   lines.append(inline(line))
 
-          title = release.get("name") or release.get("tag_name")
+          # Номер версии — моноширинным: иначе Telegram принимает «2.0.0.6» за адрес и делает ссылкой.
+          title = html.escape(release.get("name") or release.get("tag_name"))
+          title = re.sub(r"\bv?\d+(?:\.\d+){1,3}\b", r"<code>\g<0></code>", title)
           links = [f'<a href="{release["html_url"]}">Release page</a>']
           for asset in release.get("assets", []):
               if asset["name"].lower().endswith(".exe"):
                   links.append(f'<a href="{asset["browser_download_url"]}">Download installer</a>')
                   break
 
-          message = f"<b>{html.escape(title)}</b>\n\n" + "\n".join(lines) + "\n\n" + " · ".join(links)
+          message = f"<b>{title}</b>\n\n" + "\n".join(lines) + "\n\n" + " · ".join(links)
           if len(message) > 4096:  # предел Telegram на одно сообщение
               message = message[:4000].rsplit("\n", 1)[0] + "\n…\n\n" + " · ".join(links)
 
-          payload = {
+          def call(method, payload):
+              req = urllib.request.Request(
+                  f"https://api.telegram.org/bot{os.environ['TOKEN']}/{method}",
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+              )
+              answer = json.load(urllib.request.urlopen(req))
+              print(method, json.dumps(answer, ensure_ascii=False)[:300])
+              return answer
+
+          sent = call("sendMessage", {
               "chat_id": os.environ["CHAT_ID"],
               "message_thread_id": int(os.environ["THREAD_ID"]),
               "text": message,
               "parse_mode": "HTML",
               "link_preview_options": {"is_disabled": True},
-          }
-          req = urllib.request.Request(
-              f"https://api.telegram.org/bot{os.environ['TOKEN']}/sendMessage",
-              data=json.dumps(payload).encode("utf-8"),
-              headers={"Content-Type": "application/json"},
-          )
-          print(urllib.request.urlopen(req).read().decode("utf-8")[:300])
+          })
+
+          # Закрепляем пост о новом релизе. Без звука: о самом посте участников уже уведомили.
+          # Не вышло (у бота нет права закреплять) — пост всё равно отправлен, запуск не роняем.
+          try:
+              call("pinChatMessage", {
+                  "chat_id": os.environ["CHAT_ID"],
+                  "message_id": sent["result"]["message_id"],
+                  "disable_notification": True,
+              })
+          except Exception as e:
+              print("pin failed:", e)
           PY
