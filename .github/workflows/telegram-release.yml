@@ -1,4 +1,5 @@
-# Пост о новом релизе в Telegram-группу FFF (тема «Releases»).
+# Пост о новом релизе в Telegram-группы: @fastbootfirmwareflasher (тема «Releases») и
+# @gt3neo5hub (тема 521). Список — в TARGETS ниже: чат, тема и закреплять ли пост.
 #
 # Срабатывает при публикации релиза в NeFeroN/FFF. Вручную (Actions → Telegram release post →
 # Run workflow) можно отправить пост и для уже вышедшего релиза — по его тегу.
@@ -7,7 +8,8 @@
 # переводится в HTML Telegram: ### заголовки — жирным, «- » — маркеры, **жирный**, `код`.
 # Установщик к посту не прикладывается (бот отправляет максимум 50 МБ) — только ссылки.
 #
-# Нужен секрет репозитория TELEGRAM_BOT_TOKEN. Бот должен быть в группе с правом писать в тему.
+# Нужен секрет репозитория TELEGRAM_BOT_TOKEN. Бот должен быть в каждой группе с правом писать в тему.
+# Группы независимы: не вышло в одну — в остальные пост всё равно уходит, а запуск помечается ошибкой.
 # Эталонная копия этого файла лежит в проекте: Installer\telegram-release.yml.
 
 name: Telegram release post
@@ -28,13 +30,13 @@ jobs:
       - name: Post to Telegram
         env:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: "@fastbootfirmwareflasher"
-          THREAD_ID: "25"
+          # [чат, тема, закреплять пост].
+          TARGETS: '[["@fastbootfirmwareflasher", 25, true], ["@gt3neo5hub", 521, true]]'
           TAG: ${{ github.event.inputs.tag }}
           REPO: ${{ github.repository }}
         run: |
           python3 - <<'PY'
-          import html, json, os, re, urllib.request
+          import html, json, os, re, urllib.error, urllib.request
 
           event = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))
           release = event.get("release")
@@ -89,26 +91,42 @@ jobs:
                   data=json.dumps(payload).encode("utf-8"),
                   headers={"Content-Type": "application/json"},
               )
-              answer = json.load(urllib.request.urlopen(req))
+              try:
+                  answer = json.load(urllib.request.urlopen(req))
+              except urllib.error.HTTPError as e:
+                  # В теле ответа Telegram пишет причину: «chat not found», «not enough rights»…
+                  raise RuntimeError(f"{method}: HTTP {e.code} {e.read().decode('utf-8', 'replace')[:300]}")
               print(method, json.dumps(answer, ensure_ascii=False)[:300])
               return answer
 
-          sent = call("sendMessage", {
-              "chat_id": os.environ["CHAT_ID"],
-              "message_thread_id": int(os.environ["THREAD_ID"]),
-              "text": message,
-              "parse_mode": "HTML",
-              "link_preview_options": {"is_disabled": True},
-          })
+          failed = []
+          for chat_id, thread_id, pin in json.loads(os.environ["TARGETS"]):
+              try:
+                  sent = call("sendMessage", {
+                      "chat_id": chat_id,
+                      "message_thread_id": thread_id,
+                      "text": message,
+                      "parse_mode": "HTML",
+                      "link_preview_options": {"is_disabled": True},
+                  })
+              except Exception as e:
+                  # Например, бота нет в группе или у него нет права писать в тему.
+                  print(f"send to {chat_id} failed:", e)
+                  failed.append(chat_id)
+                  continue
 
-          # Закрепляем пост о новом релизе. Без звука: о самом посте участников уже уведомили.
-          # Не вышло (у бота нет права закреплять) — пост всё равно отправлен, запуск не роняем.
-          try:
-              call("pinChatMessage", {
-                  "chat_id": os.environ["CHAT_ID"],
-                  "message_id": sent["result"]["message_id"],
-                  "disable_notification": True,
-              })
-          except Exception as e:
-              print("pin failed:", e)
+              # Закрепляем пост о новом релизе. Без звука: о самом посте участников уже уведомили.
+              # Не вышло (у бота нет права закреплять) — пост всё равно отправлен, запуск не роняем.
+              if pin:
+                  try:
+                      call("pinChatMessage", {
+                          "chat_id": chat_id,
+                          "message_id": sent["result"]["message_id"],
+                          "disable_notification": True,
+                      })
+                  except Exception as e:
+                      print(f"pin in {chat_id} failed:", e)
+
+          if failed:
+              raise SystemExit("not sent to: " + ", ".join(failed))
           PY
