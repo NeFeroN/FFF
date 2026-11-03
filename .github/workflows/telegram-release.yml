@@ -1,8 +1,9 @@
 # Пост о новом релизе в Telegram-группы: @fastbootfirmwareflasher (тема «Releases») и
 # @gt3neo5hub (тема 521). Список — в TARGETS ниже: чат, тема и закреплять ли пост.
 #
-# Срабатывает при публикации релиза в NeFeroN/FFF. Вручную (Actions → Telegram release post →
-# Run workflow) можно отправить пост и для уже вышедшего релиза — по его тегу.
+# Срабатывает при публикации релиза в NeFeroN/FFF. Предрелизы (dev-сборки с ветки dev) пропускает:
+# о них в группы не пишем. Вручную (Actions → Telegram release post → Run workflow) можно
+# отправить пост и для уже вышедшего релиза — по его тегу.
 #
 # Текст берётся из описания релиза: только английская часть, после строки «---». Markdown
 # переводится в HTML Telegram: ### заголовки — жирным, «- » — маркеры, **жирный**, `код`.
@@ -25,6 +26,7 @@ on:
 
 jobs:
   post:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     runs-on: ubuntu-latest
     steps:
       - name: Post to Telegram
