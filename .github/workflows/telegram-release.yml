@@ -6,7 +6,8 @@
 # отправить пост и для уже вышедшего релиза — по его тегу.
 #
 # Текст берётся из описания релиза: только английская часть, после строки «---». Markdown
-# переводится в HTML Telegram: ### заголовки — жирным, «- » — маркеры, **жирный**, `код`.
+# переводится в HTML Telegram: ### заголовки — жирным, «- » — маркеры, **жирный**, `код`,
+# строки таблиц — маркеры с первой ячейкой жирным.
 # Установщик к посту не прикладывается (бот отправляет максимум 50 МБ) — только ссылки.
 #
 # Нужен секрет репозитория TELEGRAM_BOT_TOKEN. Бот должен быть в каждой группе с правом писать в тему.
@@ -59,10 +60,26 @@ jobs:
               return s
 
           lines = []
+          table_head = True
           for raw in text.split("\n"):
               line = raw.strip()
               if not line:
+                  table_head = True
                   continue
+              # Таблицы Telegram не показывает: строка таблицы — маркер, первая ячейка жирным,
+              # остальные через тире. Шапку и разделитель «|---|» пропускаем.
+              if line.startswith("|"):
+                  cells = [c.strip() for c in line.strip("|").split("|")]
+                  if all(re.fullmatch(r":?-{3,}:?", c) for c in cells if c):
+                      continue
+                  if table_head:
+                      table_head = False
+                      continue
+                  first = "<b>" + inline(cells[0]) + "</b>" if cells[0] else ""
+                  rest = [inline(c) for c in cells[1:] if c]
+                  lines.append("• " + " — ".join([x for x in [first] + rest if x]))
+                  continue
+              table_head = True
               if line.startswith("#"):
                   if lines:
                       lines.append("")
